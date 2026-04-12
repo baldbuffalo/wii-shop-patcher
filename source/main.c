@@ -4,12 +4,12 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <malloc.h>
-#include <network.h>
+#include <ogc/network.h>
 #include <ogcsys.h>
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-#include <es.h>
-#include <fat.h>
+#include <ogc/es.h>
+#include <ogc/fat.h>
 
 // -----------------------------------------------------------------------
 // Config — replace with your domain
