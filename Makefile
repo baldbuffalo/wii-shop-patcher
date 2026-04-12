@@ -8,9 +8,9 @@ TARGET    := boot
 BUILD     := build
 SOURCES   := source
 
-CFLAGS    := -g -O2 -Wall $(MACHDEP) $(INCLUDE) -I$(DEVKITPRO)/libogc/include
+CFLAGS    := -g -O2 -Wall $(MACHDEP) $(INCLUDE)
 CXXFLAGS  := $(CFLAGS)
-LDFLAGS   := -g $(MACHDEP) -Wl,-Map,$(notdir $@).map -L$(DEVKITPRO)/libogc/lib/wii
+LDFLAGS   := -g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 
 LIBS      := -lwiiuse -lbte -lwiikeyboard -logc -lm -lfat
 
