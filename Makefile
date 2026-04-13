@@ -25,6 +25,8 @@ $(BUILD):
 	mkdir -p $@ $@/source
 
 $(TARGET).elf: $(OFILES)
+	@echo linking ... $(notdir $@)
+	$(CC) $(LDFLAGS) -o $@ $(OFILES) $(LIBPATHS) $(LIBS)
 
 $(TARGET).dol: $(TARGET).elf
 	@elf2dol $< $@
