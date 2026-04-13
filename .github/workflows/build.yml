@@ -29,11 +29,11 @@ jobs:
 
       - name: Prepare release folder
         run: |
-          mkdir -p wii-shop-patcher
-          cp boot.dol wii-shop-patcher/boot.dol
+          mkdir -p release/wii-shop-patcher
+          cp boot.dol release/wii-shop-patcher/boot.dol
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: wii-shop-patcher
-          path: wii-shop-patcher/
+          path: release/
