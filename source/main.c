@@ -12,15 +12,19 @@
 #include <fat.h>
 
 // -----------------------------------------------------------------------
-// Config — replace site.net---- with your domain (must stay 12 chars)
+// Config — replace test.net---- with your domain (must stay 12 chars)
 // -----------------------------------------------------------------------
-#define YOUR_DOMAIN "site.net----"
+#define YOUR_DOMAIN "test.net----"
 
 static const char *patches[][2] = {
+    // Domain patches — replacement must be same length as original
     { "ecs.shop.wii.com", "ecs." YOUR_DOMAIN },
     { "ias.shop.wii.com", "ias." YOUR_DOMAIN },
     { "ccs.shop.wii.com", "ccs." YOUR_DOMAIN },
     { "nus.shop.wii.com", "nus." YOUR_DOMAIN },
+    // Path patches — route each section to correct server path
+    { "/ccs/download/WiiWare", "/vault/WiiWare       " },
+    { "/ccs/download/Wii----", "/vault/Wii-----------" },
     { NULL, NULL }
 };
 
@@ -28,6 +32,11 @@ static const char *patches[][2] = {
 #define SHOP_TITLE_USA 0x0001000248414241ULL
 #define SHOP_TITLE_EUR 0x0001000248414245ULL
 #define SHOP_TITLE_JPN 0x000100024841424aULL
+
+// vWii (Wii U) Shop Channel title IDs
+#define SHOP_TITLE_VWII_USA 0x000100024841424bULL
+#define SHOP_TITLE_VWII_EUR 0x000100024841424cULL
+#define SHOP_TITLE_VWII_JPN 0x000100024841424dULL
 
 // -----------------------------------------------------------------------
 // Structs
@@ -88,9 +97,12 @@ static uint64_t detect_title_id(void) {
         SHOP_TITLE_USA,
         SHOP_TITLE_EUR,
         SHOP_TITLE_JPN,
+        SHOP_TITLE_VWII_USA,
+        SHOP_TITLE_VWII_EUR,
+        SHOP_TITLE_VWII_JPN,
         0
     };
-    const char *names[] = { "USA", "EUR", "JPN" };
+    const char *names[] = { "USA", "EUR", "JPN", "vWii USA", "vWii EUR", "vWii JPN" };
 
     for (int i = 0; candidates[i]; i++) {
         u32 tmd_size = 0;
