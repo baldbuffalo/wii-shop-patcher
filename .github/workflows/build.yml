@@ -25,19 +25,16 @@ jobs:
       - name: Build
         run: make
 
-      - name: Prepare release folder
+      - name: Prepare release zip
         run: |
           mkdir -p wii-shop-patcher
           cp boot.dol wii-shop-patcher/boot.dol
+          zip -r wii-shop-patcher.zip wii-shop-patcher/
 
-      - name: Upload boot.dol
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: release
-          path: wii-shop-patcher/
-
-      - name: Create release on tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create release
         uses: softprops/action-gh-release@v3.0.0
         with:
-          files: boot.dol
+          tag_name: latest
+          name: Latest Build
+          files: wii-shop-patcher.zip
+          prerelease: true
