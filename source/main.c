@@ -106,7 +106,6 @@ static uint64_t detect_title_id(void) {
 
     for (int i = 0; candidates[i]; i++) {
         u32 tmd_size = 0;
-        // ES_GetStoredTMDSize(u64 titleID, u32 *size)
         if (ES_GetStoredTMDSize(candidates[i], &tmd_size) >= 0 && tmd_size > 0) {
             printf("  Detected region: %s\n", names[i]);
             return candidates[i];
@@ -119,7 +118,6 @@ static uint64_t detect_title_id(void) {
 // Read existing Shop Channel content from NAND via ES
 // -----------------------------------------------------------------------
 static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
-    // ES_GetStoredTMDSize(u64 titleID, u32 *size)
     u32 tmd_size = 0;
     if (ES_GetStoredTMDSize(title_id, &tmd_size) < 0) {
         printf("  [!] Could not get TMD size.\n");
@@ -129,7 +127,6 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     signed_blob *tmd_buf = (signed_blob *)memalign(32, tmd_size);
     if (!tmd_buf) { printf("  [!] Out of memory.\n"); return NULL; }
 
-    // ES_GetStoredTMD(u64 titleID, signed_blob *stmd, u32 size)
     if (ES_GetStoredTMD(title_id, tmd_buf, tmd_size) < 0) {
         printf("  [!] Could not read TMD.\n");
         free(tmd_buf);
@@ -139,7 +136,6 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     tmd *t = SIGNATURE_PAYLOAD(tmd_buf);
     printf("  TMD has %d content(s)\n", t->num_contents);
 
-    // Read first content by index 0
     tmd_content *content_rec = &t->contents[0];
     uint32_t content_size = (uint32_t)content_rec->size;
 
@@ -150,10 +146,10 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
         return NULL;
     }
 
-    // ES_OpenContent(u16 index) — takes content index, not title_id+cid
-    int fd = ES_OpenContent(0);
+    // ES_OpenTitleContent opens content belonging to a different title
+    int fd = ES_OpenTitleContent(title_id, t->contents, content_rec->index);
     if (fd < 0) {
-        printf("  [!] ES_OpenContent failed: %d\n", fd);
+        printf("  [!] ES_OpenTitleContent failed: %d\n", fd);
         free(tmd_buf);
         free(content_buf);
         return NULL;
@@ -203,14 +199,12 @@ static uint32_t patch_buffer(uint8_t *buf, uint32_t len) {
 // -----------------------------------------------------------------------
 static int write_nand_content(uint64_t title_id, uint8_t *content_buf,
                               uint32_t content_size) {
-    // Re-read TMD
     u32 tmd_size = 0;
     ES_GetStoredTMDSize(title_id, &tmd_size);
     signed_blob *tmd_buf = (signed_blob *)memalign(32, tmd_size);
     if (!tmd_buf) return -1;
     ES_GetStoredTMD(title_id, tmd_buf, tmd_size);
 
-    // Get ticket views — ES_GetTicketViews(u64 titleID, tikview *views, u32 cnt)
     tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview));
     if (!ticket_buf) { free(tmd_buf); return -2; }
     if (ES_GetTicketViews(title_id, ticket_buf, 1) < 0) {
@@ -219,7 +213,6 @@ static int write_nand_content(uint64_t title_id, uint8_t *content_buf,
         return -3;
     }
 
-    // Certs — standard 0x400 chain
     signed_blob *cert_buf = (signed_blob *)memalign(32, 0x400);
     if (!cert_buf) { free(tmd_buf); free(ticket_buf); return -4; }
 
