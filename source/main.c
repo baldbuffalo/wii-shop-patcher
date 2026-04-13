@@ -12,12 +12,9 @@
 #include <fat.h>
 
 // -----------------------------------------------------------------------
-// Config — replace with your domain
-// IMPORTANT: each replacement must be the exact same byte length
-// as the original. "shop.wii.com" = 12 chars, so your domain
-// must also be 12 chars. Pad with dashes if needed e.g. "mysite-.net"
+// Config — replace site.net---- with your domain (must stay 12 chars)
 // -----------------------------------------------------------------------
-#define YOUR_DOMAIN "site.net----"  // must stay 12 chars — replace site.net with your domain and adjust dashes
+#define YOUR_DOMAIN "site.net----"
 
 static const char *patches[][2] = {
     { "ecs.shop.wii.com", "ecs." YOUR_DOMAIN },
@@ -96,9 +93,9 @@ static uint64_t detect_title_id(void) {
     const char *names[] = { "USA", "EUR", "JPN" };
 
     for (int i = 0; candidates[i]; i++) {
-        uint32_t num_contents = 0;
-        if (ES_GetNumStoredTMDContents(candidates[i], 0, &num_contents) >= 0
-            && num_contents > 0) {
+        u32 tmd_size = 0;
+        // ES_GetStoredTMDSize(u64 titleID, u32 *size)
+        if (ES_GetStoredTMDSize(candidates[i], &tmd_size) >= 0 && tmd_size > 0) {
             printf("  Detected region: %s\n", names[i]);
             return candidates[i];
         }
@@ -110,9 +107,9 @@ static uint64_t detect_title_id(void) {
 // Read existing Shop Channel content from NAND via ES
 // -----------------------------------------------------------------------
 static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
-    // Get TMD to find content records
-    uint32_t tmd_size = 0;
-    if (ES_GetStoredTMDSize(title_id, 0, &tmd_size) < 0) {
+    // ES_GetStoredTMDSize(u64 titleID, u32 *size)
+    u32 tmd_size = 0;
+    if (ES_GetStoredTMDSize(title_id, &tmd_size) < 0) {
         printf("  [!] Could not get TMD size.\n");
         return NULL;
     }
@@ -120,21 +117,19 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     signed_blob *tmd_buf = (signed_blob *)memalign(32, tmd_size);
     if (!tmd_buf) { printf("  [!] Out of memory.\n"); return NULL; }
 
-    if (ES_GetStoredTMD(title_id, 0, tmd_buf, tmd_size) < 0) {
+    // ES_GetStoredTMD(u64 titleID, signed_blob *stmd, u32 size)
+    if (ES_GetStoredTMD(title_id, tmd_buf, tmd_size) < 0) {
         printf("  [!] Could not read TMD.\n");
         free(tmd_buf);
         return NULL;
     }
 
-    // Get content count
     tmd *t = SIGNATURE_PAYLOAD(tmd_buf);
-    uint16_t num_contents = t->num_contents;
-    printf("  TMD has %d content(s)\n", num_contents);
+    printf("  TMD has %d content(s)\n", t->num_contents);
 
-    // Read first content (the main app — index 0)
+    // Read first content by index 0
     tmd_content *content_rec = &t->contents[0];
     uint32_t content_size = (uint32_t)content_rec->size;
-    uint32_t cid = content_rec->cid;
 
     uint8_t *content_buf = (uint8_t *)memalign(32, content_size);
     if (!content_buf) {
@@ -143,7 +138,8 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
         return NULL;
     }
 
-    int fd = ES_OpenContent(title_id, cid);
+    // ES_OpenContent(u16 index) — takes content index, not title_id+cid
+    int fd = ES_OpenContent(0);
     if (fd < 0) {
         printf("  [!] ES_OpenContent failed: %d\n", fd);
         free(tmd_buf);
@@ -195,29 +191,29 @@ static uint32_t patch_buffer(uint8_t *buf, uint32_t len) {
 // -----------------------------------------------------------------------
 static int write_nand_content(uint64_t title_id, uint8_t *content_buf,
                               uint32_t content_size) {
-    // Need fresh TMD and ticket to reinstall
-    uint32_t tmd_size = 0;
-    ES_GetStoredTMDSize(title_id, 0, &tmd_size);
+    // Re-read TMD
+    u32 tmd_size = 0;
+    ES_GetStoredTMDSize(title_id, &tmd_size);
     signed_blob *tmd_buf = (signed_blob *)memalign(32, tmd_size);
     if (!tmd_buf) return -1;
-    ES_GetStoredTMD(title_id, 0, tmd_buf, tmd_size);
+    ES_GetStoredTMD(title_id, tmd_buf, tmd_size);
 
-    // Get ticket
-    uint32_t ticket_size = 0;
-    ES_GetTicketViewSize(title_id, &ticket_size);
-    // Full ticket is 0x2A4 bytes
-    signed_blob *ticket_buf = (signed_blob *)memalign(32, 0x2A4);
+    // Get ticket views — ES_GetTicketViews(u64 titleID, tikview *views, u32 cnt)
+    tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview));
     if (!ticket_buf) { free(tmd_buf); return -2; }
-    ES_GetTicketViews(title_id, (tikview *)ticket_buf, 1);
+    if (ES_GetTicketViews(title_id, ticket_buf, 1) < 0) {
+        printf("  [!] ES_GetTicketViews failed.\n");
+        free(tmd_buf); free(ticket_buf);
+        return -3;
+    }
 
-    // Get certs
-    uint32_t cert_size = 0x400; // standard cert chain size
-    signed_blob *cert_buf = (signed_blob *)memalign(32, cert_size);
-    if (!cert_buf) { free(tmd_buf); free(ticket_buf); return -3; }
+    // Certs — standard 0x400 chain
+    signed_blob *cert_buf = (signed_blob *)memalign(32, 0x400);
+    if (!cert_buf) { free(tmd_buf); free(ticket_buf); return -4; }
 
     printf("  Starting ES install...\n");
-    int ret = ES_AddTitleStart(tmd_buf, tmd_size, cert_buf, cert_size,
-                               ticket_buf, 0x2A4);
+    int ret = ES_AddTitleStart(tmd_buf, tmd_size, cert_buf, 0x400,
+                               (signed_blob *)ticket_buf, sizeof(tikview));
     free(cert_buf);
     if (ret < 0) {
         printf("  [!] ES_AddTitleStart failed: %d\n", ret);
@@ -276,7 +272,7 @@ int main(int argc, char *argv[]) {
     printf("  ----------------\n\n");
 
     // 1. Detect region
-    printf("[1/3] Detecting Shop Channel...\n");
+    printf("[1/4] Detecting Shop Channel...\n");
     uint64_t title_id = detect_title_id();
     if (!title_id) {
         printf("  [!] Shop Channel not found on this Wii.\n");
@@ -285,7 +281,7 @@ int main(int argc, char *argv[]) {
     printf("  Title ID: %016llX\n\n", (unsigned long long)title_id);
 
     // 2. Read content from NAND
-    printf("[2/3] Reading content from NAND...\n");
+    printf("[2/4] Reading content from NAND...\n");
     uint32_t content_len = 0;
     uint8_t *content_buf = read_nand_content(title_id, &content_len);
     if (!content_buf) {
@@ -295,7 +291,7 @@ int main(int argc, char *argv[]) {
     printf("  Read %lu KB\n\n", (unsigned long)(content_len / 1024));
 
     // 3. Patch URLs
-    printf("[3/3] Patching URLs...\n");
+    printf("[3/4] Patching URLs...\n");
     uint32_t hits = patch_buffer(content_buf, content_len);
     if (hits == 0) {
         printf("  [!] No URL matches found.\n");
@@ -306,7 +302,7 @@ int main(int argc, char *argv[]) {
     printf("  Replaced %lu occurrence(s)\n\n", (unsigned long)hits);
 
     // 4. Write back to NAND
-    printf("[4/3] Writing patched content to NAND...\n");
+    printf("[4/4] Writing patched content to NAND...\n");
     int ret = write_nand_content(title_id, content_buf, content_len);
     free(content_buf);
     if (ret < 0) {
