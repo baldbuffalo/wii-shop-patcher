@@ -8,16 +8,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: devkitpro/devkitppc:latest
 
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Build
-        run: make
-        env:
-          PATH: /opt/devkitpro/devkitPPC/bin:/opt/devkitpro/tools/bin:$PATH
+      - name: Build with devkitPPC
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/project \
+            -w /project \
+            devkitpro/devkitppc:latest \
+            bash -c "export PATH=/opt/devkitpro/devkitPPC/bin:/opt/devkitpro/tools/bin:$PATH && make"
 
       - name: Upload boot.dol
         uses: actions/upload-artifact@v7.0.1
