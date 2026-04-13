@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <malloc.h>
-#include <ogc/network.h>
+#include <include/network.h>
 #include <ogcsys.h>
 #include <gccore.h>
 #include <wiiuse/wpad.h>
