@@ -33,10 +33,7 @@ static const char *patches[][2] = {
 #define SHOP_TITLE_VWII_EUR 0x000100024841424cULL
 #define SHOP_TITLE_VWII_JPN 0x000100024841424dULL
 
-// IOS title IDs are 0x000000010000XXXX where XXXX is the slot number
-#define IOS_TITLE_ID(slot) (0x0000000100000000ULL | (uint64_t)(slot))
-
-// Known good cIOS slots tried first (d2x standard, then IOS58/236 fallbacks)
+// Known-good cIOS slots tried first, then full scan fills the rest
 static const int PREFERRED_CIOS[] = { 249, 250, 248, 247, 246, 58, 236, -1 };
 
 // -----------------------------------------------------------------------
@@ -88,17 +85,11 @@ static void init_video(void) {
 // -----------------------------------------------------------------------
 // IOS auto-detection
 //
-// Strategy:
-//   1. Enumerate all installed titles via ES_GetTitles, extract IOS slots.
-//   2. Score each slot: preferred list first, then all others descending
-//      (higher slots are more likely to be cIOS).
-//   3. Try IOS_ReloadIOS on each; the first success is used.
-//      No ES test needed — if reload succeeds and ES still fails we report
-//      the specific error rather than silently retrying.
+// IMPORTANT: IOS_ReloadIOS tears down the entire IOS kernel including the
+// Bluetooth stack. WPAD must be shut down before the reload and
+// re-initialised after, otherwise the console freezes.
 // -----------------------------------------------------------------------
-
-// Returns slot number of IOS actually loaded, or -1 on failure.
-static int autodetect_and_load_cios(uint64_t shop_title_id) {
+static int autodetect_and_load_cios(void) {
     // --- enumerate installed titles ---
     u32 num_titles = 0;
     if (ES_GetNumTitles(&num_titles) < 0 || num_titles == 0) {
@@ -107,21 +98,17 @@ static int autodetect_and_load_cios(uint64_t shop_title_id) {
     }
 
     uint64_t *title_list = (uint64_t *)memalign(32, sizeof(uint64_t) * num_titles);
-    if (!title_list) {
-        printf("  [!] Out of memory (title list).\n");
-        return -1;
-    }
+    if (!title_list) { printf("  [!] Out of memory.\n"); return -1; }
+
     if (ES_GetTitles(title_list, num_titles) < 0) {
         printf("  [!] ES_GetTitles failed.\n");
         free(title_list);
         return -1;
     }
 
-    // --- collect IOS slots (title high word == 0x00000001, slot 3-255) ---
-    // slot 0-2 are reserved; 200-255 are typical cIOS range
+    // Collect IOS slots (high word == 0x00000001, slot 3-255)
     int ios_slots[256];
     int ios_count = 0;
-
     for (u32 i = 0; i < num_titles; i++) {
         uint32_t hi = (uint32_t)(title_list[i] >> 32);
         uint32_t lo = (uint32_t)(title_list[i] & 0xFFFFFFFF);
@@ -131,17 +118,13 @@ static int autodetect_and_load_cios(uint64_t shop_title_id) {
     free(title_list);
 
     printf("  Found %d IOS title(s) installed\n", ios_count);
-    if (ios_count == 0)
-        return -1;
+    if (ios_count == 0) return -1;
 
-    // --- build ordered candidate list ---
-    // First: preferred cIOS slots (if installed), then remaining slots
-    // in descending order (higher numbers more likely to be cIOS).
+    // Build ordered candidate list: preferred slots first, then high-to-low
     int ordered[256];
     int ordered_count = 0;
     uint8_t added[256] = {0};
 
-    // Pass 1: preferred list
     for (int p = 0; PREFERRED_CIOS[p] != -1; p++) {
         int slot = PREFERRED_CIOS[p];
         for (int j = 0; j < ios_count; j++) {
@@ -152,8 +135,6 @@ static int autodetect_and_load_cios(uint64_t shop_title_id) {
             }
         }
     }
-
-    // Pass 2: remaining, high-to-low (favour 200-255 range naturally)
     for (int s = 255; s >= 3; s--) {
         if (added[s]) continue;
         for (int j = 0; j < ios_count; j++) {
@@ -165,18 +146,29 @@ static int autodetect_and_load_cios(uint64_t shop_title_id) {
         }
     }
 
-    // --- try each candidate ---
+    // Try each candidate.
+    // Shut down WPAD first — IOS_ReloadIOS resets the BT/IOS kernel and
+    // will freeze the console if the Bluetooth stack is still running.
+    WPAD_Shutdown();
+
+    int loaded = -1;
     for (int i = 0; i < ordered_count; i++) {
         int slot = ordered[i];
         printf("  Trying IOS%d... ", slot);
+        VIDEO_WaitVSync(); // flush printf to framebuffer before reload
+
         if (IOS_ReloadIOS(slot) >= 0) {
             printf("OK\n");
-            return slot;
+            loaded = slot;
+            break;
         }
         printf("failed\n");
     }
 
-    return -1;
+    // Reinitialise WPAD regardless of outcome so the HOME button works
+    WPAD_Init();
+
+    return loaded;
 }
 
 // -----------------------------------------------------------------------
@@ -222,7 +214,7 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     tmd *t = SIGNATURE_PAYLOAD(tmd_buf);
     printf("  TMD has %d content(s)\n", t->num_contents);
 
-    // Find the boot content — lowest TMD index value among all entries
+    // Find boot content — lowest TMD index value
     tmd_content *boot_content = &t->contents[0];
     for (int i = 1; i < t->num_contents; i++) {
         if (t->contents[i].index < boot_content->index)
@@ -239,20 +231,17 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
         return NULL;
     }
 
-    // Query actual ticket view count before allocating
     u32 num_views = 0;
     if (ES_GetNumTicketViews(title_id, &num_views) < 0 || num_views == 0) {
-        printf("  [!] ES_GetNumTicketViews failed or no views present.\n");
-        free(tmd_buf);
-        free(content_buf);
+        printf("  [!] ES_GetNumTicketViews failed or no views.\n");
+        free(tmd_buf); free(content_buf);
         return NULL;
     }
 
     tikview *views = (tikview *)memalign(32, sizeof(tikview) * num_views);
     if (!views) {
         printf("  [!] Out of memory (ticket views).\n");
-        free(tmd_buf);
-        free(content_buf);
+        free(tmd_buf); free(content_buf);
         return NULL;
     }
     if (ES_GetTicketViews(title_id, views, num_views) < 0) {
@@ -398,9 +387,11 @@ int main(int argc, char *argv[]) {
     printf("  Wii Shop Patcher\n");
     printf("  ----------------\n\n");
 
-    // 0. Auto-detect and load a suitable IOS
+    // 0. Auto-detect and load a suitable IOS.
+    //    autodetect_and_load_cios() handles WPAD_Shutdown/WPAD_Init
+    //    around the IOS reload internally.
     printf("[0/4] Detecting cIOS...\n");
-    int cios = autodetect_and_load_cios(SHOP_TITLE_USA);
+    int cios = autodetect_and_load_cios();
     if (cios < 0) {
         printf("  [!] No usable IOS found on this console.\n");
         printf("      Install d2x cIOS (slots 249/250) via the\n");
