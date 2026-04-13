@@ -17,35 +17,31 @@
 #define YOUR_DOMAIN "vimm.net----"
 
 static const char *patches[][2] = {
-    // Domain patches — replacement must be same length as original
     { "ecs.shop.wii.com", "ecs." YOUR_DOMAIN },
     { "ias.shop.wii.com", "ias." YOUR_DOMAIN },
     { "ccs.shop.wii.com", "ccs." YOUR_DOMAIN },
     { "nus.shop.wii.com", "nus." YOUR_DOMAIN },
-    // Path patches — route each section to correct server path
     { "/ccs/download/WiiWare", "/vault/WiiWare       " },
     { "/ccs/download/Wii----", "/vault/Wii-----------" },
     { NULL, NULL }
 };
 
-// Shop Channel title IDs by region
-#define SHOP_TITLE_USA 0x0001000248414241ULL
-#define SHOP_TITLE_EUR 0x0001000248414245ULL
-#define SHOP_TITLE_JPN 0x000100024841424aULL
-
-// vWii (Wii U) Shop Channel title IDs
+#define SHOP_TITLE_USA      0x0001000248414241ULL
+#define SHOP_TITLE_EUR      0x0001000248414245ULL
+#define SHOP_TITLE_JPN      0x000100024841424aULL
 #define SHOP_TITLE_VWII_USA 0x000100024841424bULL
 #define SHOP_TITLE_VWII_EUR 0x000100024841424cULL
 #define SHOP_TITLE_VWII_JPN 0x000100024841424dULL
 
+// IOS title IDs are 0x000000010000XXXX where XXXX is the slot number
+#define IOS_TITLE_ID(slot) (0x0000000100000000ULL | (uint64_t)(slot))
+
+// Known good cIOS slots tried first (d2x standard, then IOS58/236 fallbacks)
+static const int PREFERRED_CIOS[] = { 249, 250, 248, 247, 246, 58, 236, -1 };
+
 // -----------------------------------------------------------------------
 // Structs
 // -----------------------------------------------------------------------
-typedef struct {
-    uint8_t  *data;
-    uint32_t  len;
-} Buffer;
-
 typedef struct {
     uint32_t header_size;
     uint16_t wad_type;
@@ -90,16 +86,106 @@ static void init_video(void) {
 }
 
 // -----------------------------------------------------------------------
-// Detect installed region — tries USA, EUR, JPN in order
+// IOS auto-detection
+//
+// Strategy:
+//   1. Enumerate all installed titles via ES_GetTitles, extract IOS slots.
+//   2. Score each slot: preferred list first, then all others descending
+//      (higher slots are more likely to be cIOS).
+//   3. Try IOS_ReloadIOS on each; the first success is used.
+//      No ES test needed — if reload succeeds and ES still fails we report
+//      the specific error rather than silently retrying.
+// -----------------------------------------------------------------------
+
+// Returns slot number of IOS actually loaded, or -1 on failure.
+static int autodetect_and_load_cios(uint64_t shop_title_id) {
+    // --- enumerate installed titles ---
+    u32 num_titles = 0;
+    if (ES_GetNumTitles(&num_titles) < 0 || num_titles == 0) {
+        printf("  [!] ES_GetNumTitles failed.\n");
+        return -1;
+    }
+
+    uint64_t *title_list = (uint64_t *)memalign(32, sizeof(uint64_t) * num_titles);
+    if (!title_list) {
+        printf("  [!] Out of memory (title list).\n");
+        return -1;
+    }
+    if (ES_GetTitles(title_list, num_titles) < 0) {
+        printf("  [!] ES_GetTitles failed.\n");
+        free(title_list);
+        return -1;
+    }
+
+    // --- collect IOS slots (title high word == 0x00000001, slot 3-255) ---
+    // slot 0-2 are reserved; 200-255 are typical cIOS range
+    int ios_slots[256];
+    int ios_count = 0;
+
+    for (u32 i = 0; i < num_titles; i++) {
+        uint32_t hi = (uint32_t)(title_list[i] >> 32);
+        uint32_t lo = (uint32_t)(title_list[i] & 0xFFFFFFFF);
+        if (hi == 0x00000001 && lo >= 3 && lo <= 255)
+            ios_slots[ios_count++] = (int)lo;
+    }
+    free(title_list);
+
+    printf("  Found %d IOS title(s) installed\n", ios_count);
+    if (ios_count == 0)
+        return -1;
+
+    // --- build ordered candidate list ---
+    // First: preferred cIOS slots (if installed), then remaining slots
+    // in descending order (higher numbers more likely to be cIOS).
+    int ordered[256];
+    int ordered_count = 0;
+    uint8_t added[256] = {0};
+
+    // Pass 1: preferred list
+    for (int p = 0; PREFERRED_CIOS[p] != -1; p++) {
+        int slot = PREFERRED_CIOS[p];
+        for (int j = 0; j < ios_count; j++) {
+            if (ios_slots[j] == slot && !added[slot]) {
+                ordered[ordered_count++] = slot;
+                added[slot] = 1;
+                break;
+            }
+        }
+    }
+
+    // Pass 2: remaining, high-to-low (favour 200-255 range naturally)
+    for (int s = 255; s >= 3; s--) {
+        if (added[s]) continue;
+        for (int j = 0; j < ios_count; j++) {
+            if (ios_slots[j] == s) {
+                ordered[ordered_count++] = s;
+                added[s] = 1;
+                break;
+            }
+        }
+    }
+
+    // --- try each candidate ---
+    for (int i = 0; i < ordered_count; i++) {
+        int slot = ordered[i];
+        printf("  Trying IOS%d... ", slot);
+        if (IOS_ReloadIOS(slot) >= 0) {
+            printf("OK\n");
+            return slot;
+        }
+        printf("failed\n");
+    }
+
+    return -1;
+}
+
+// -----------------------------------------------------------------------
+// Detect installed Shop Channel region
 // -----------------------------------------------------------------------
 static uint64_t detect_title_id(void) {
     uint64_t candidates[] = {
-        SHOP_TITLE_USA,
-        SHOP_TITLE_EUR,
-        SHOP_TITLE_JPN,
-        SHOP_TITLE_VWII_USA,
-        SHOP_TITLE_VWII_EUR,
-        SHOP_TITLE_VWII_JPN,
+        SHOP_TITLE_USA, SHOP_TITLE_EUR, SHOP_TITLE_JPN,
+        SHOP_TITLE_VWII_USA, SHOP_TITLE_VWII_EUR, SHOP_TITLE_VWII_JPN,
         0
     };
     const char *names[] = { "USA", "EUR", "JPN", "vWii USA", "vWii EUR", "vWii JPN" };
@@ -125,7 +211,7 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     }
 
     signed_blob *tmd_buf = (signed_blob *)memalign(32, tmd_size);
-    if (!tmd_buf) { printf("  [!] Out of memory.\n"); return NULL; }
+    if (!tmd_buf) { printf("  [!] Out of memory (TMD).\n"); return NULL; }
 
     if (ES_GetStoredTMD(title_id, tmd_buf, tmd_size) < 0) {
         printf("  [!] Could not read TMD.\n");
@@ -136,45 +222,58 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
     tmd *t = SIGNATURE_PAYLOAD(tmd_buf);
     printf("  TMD has %d content(s)\n", t->num_contents);
 
-    tmd_content *content_rec = &t->contents[0];
-    uint32_t content_size = (uint32_t)content_rec->size;
+    // Find the boot content — lowest TMD index value among all entries
+    tmd_content *boot_content = &t->contents[0];
+    for (int i = 1; i < t->num_contents; i++) {
+        if (t->contents[i].index < boot_content->index)
+            boot_content = &t->contents[i];
+    }
+    printf("  Boot content: index %d, %lu KB\n",
+           boot_content->index, (unsigned long)(boot_content->size / 1024));
 
+    uint32_t content_size = (uint32_t)boot_content->size;
     uint8_t *content_buf = (uint8_t *)memalign(32, content_size);
     if (!content_buf) {
-        printf("  [!] Out of memory for content.\n");
+        printf("  [!] Out of memory (content).\n");
         free(tmd_buf);
         return NULL;
     }
 
-    // ES_OpenTitleContent requires a tikview, not a tmd_content
-    tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview));
-    if (!ticket_buf) {
-        printf("  [!] Out of memory for ticket view.\n");
+    // Query actual ticket view count before allocating
+    u32 num_views = 0;
+    if (ES_GetNumTicketViews(title_id, &num_views) < 0 || num_views == 0) {
+        printf("  [!] ES_GetNumTicketViews failed or no views present.\n");
         free(tmd_buf);
         free(content_buf);
         return NULL;
     }
-    if (ES_GetTicketViews(title_id, ticket_buf, 1) < 0) {
+
+    tikview *views = (tikview *)memalign(32, sizeof(tikview) * num_views);
+    if (!views) {
+        printf("  [!] Out of memory (ticket views).\n");
+        free(tmd_buf);
+        free(content_buf);
+        return NULL;
+    }
+    if (ES_GetTicketViews(title_id, views, num_views) < 0) {
         printf("  [!] ES_GetTicketViews failed.\n");
-        free(tmd_buf);
-        free(content_buf);
-        free(ticket_buf);
+        free(tmd_buf); free(content_buf); free(views);
         return NULL;
     }
 
-    int fd = ES_OpenTitleContent(title_id, ticket_buf, content_rec->index);
+    int fd = ES_OpenTitleContent(title_id, views, boot_content->index);
     if (fd < 0) {
         printf("  [!] ES_OpenTitleContent failed: %d\n", fd);
-        free(tmd_buf);
-        free(content_buf);
-        free(ticket_buf);
+        if (fd == -1026)
+            printf("      Loaded IOS lacks ES patches. Try a different cIOS.\n");
+        free(tmd_buf); free(content_buf); free(views);
         return NULL;
     }
 
     int ret = ES_ReadContent(fd, content_buf, content_size);
     ES_CloseContent(fd);
     free(tmd_buf);
-    free(ticket_buf);
+    free(views);
 
     if (ret < 0) {
         printf("  [!] ES_ReadContent failed: %d\n", ret);
@@ -222,9 +321,14 @@ static int write_nand_content(uint64_t title_id, uint8_t *content_buf,
     if (!tmd_buf) return -1;
     ES_GetStoredTMD(title_id, tmd_buf, tmd_size);
 
-    tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview));
+    u32 num_views = 0;
+    if (ES_GetNumTicketViews(title_id, &num_views) < 0 || num_views == 0) {
+        free(tmd_buf);
+        return -2;
+    }
+    tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview) * num_views);
     if (!ticket_buf) { free(tmd_buf); return -2; }
-    if (ES_GetTicketViews(title_id, ticket_buf, 1) < 0) {
+    if (ES_GetTicketViews(title_id, ticket_buf, num_views) < 0) {
         printf("  [!] ES_GetTicketViews failed.\n");
         free(tmd_buf); free(ticket_buf);
         return -3;
@@ -235,7 +339,8 @@ static int write_nand_content(uint64_t title_id, uint8_t *content_buf,
 
     printf("  Starting ES install...\n");
     int ret = ES_AddTitleStart(tmd_buf, tmd_size, cert_buf, 0x400,
-                               (signed_blob *)ticket_buf, sizeof(tikview));
+                               (signed_blob *)ticket_buf,
+                               sizeof(tikview) * num_views);
     free(cert_buf);
     if (ret < 0) {
         printf("  [!] ES_AddTitleStart failed: %d\n", ret);
@@ -293,6 +398,17 @@ int main(int argc, char *argv[]) {
     printf("  Wii Shop Patcher\n");
     printf("  ----------------\n\n");
 
+    // 0. Auto-detect and load a suitable IOS
+    printf("[0/4] Detecting cIOS...\n");
+    int cios = autodetect_and_load_cios(SHOP_TITLE_USA);
+    if (cios < 0) {
+        printf("  [!] No usable IOS found on this console.\n");
+        printf("      Install d2x cIOS (slots 249/250) via the\n");
+        printf("      d2x cIOS installer and try again.\n");
+        goto wait_exit;
+    }
+    printf("  Running on IOS%d\n\n", cios);
+
     // 1. Detect region
     printf("[1/4] Detecting Shop Channel...\n");
     uint64_t title_id = detect_title_id();
@@ -333,7 +449,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\n  Done!\n");
-    printf("  Shop Channel now points to: site.net\n");
+    printf("  Shop Channel now points to: %s\n", YOUR_DOMAIN);
     printf("  You can delete this app from your SD card.\n");
 
 wait_exit:
