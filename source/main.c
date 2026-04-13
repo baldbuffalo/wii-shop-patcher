@@ -14,7 +14,7 @@
 // -----------------------------------------------------------------------
 // Config — replace test.net---- with your domain (must stay 12 chars)
 // -----------------------------------------------------------------------
-#define YOUR_DOMAIN "test.net----"
+#define YOUR_DOMAIN "vimm.net----"
 
 static const char *patches[][2] = {
     // Domain patches — replacement must be same length as original
