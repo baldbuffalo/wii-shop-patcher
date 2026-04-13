@@ -146,18 +146,35 @@ static uint8_t *read_nand_content(uint64_t title_id, uint32_t *out_len) {
         return NULL;
     }
 
-    // ES_OpenTitleContent opens content belonging to a different title
-    int fd = ES_OpenTitleContent(title_id, t->contents, content_rec->index);
+    // ES_OpenTitleContent requires a tikview, not a tmd_content
+    tikview *ticket_buf = (tikview *)memalign(32, sizeof(tikview));
+    if (!ticket_buf) {
+        printf("  [!] Out of memory for ticket view.\n");
+        free(tmd_buf);
+        free(content_buf);
+        return NULL;
+    }
+    if (ES_GetTicketViews(title_id, ticket_buf, 1) < 0) {
+        printf("  [!] ES_GetTicketViews failed.\n");
+        free(tmd_buf);
+        free(content_buf);
+        free(ticket_buf);
+        return NULL;
+    }
+
+    int fd = ES_OpenTitleContent(title_id, ticket_buf, content_rec->index);
     if (fd < 0) {
         printf("  [!] ES_OpenTitleContent failed: %d\n", fd);
         free(tmd_buf);
         free(content_buf);
+        free(ticket_buf);
         return NULL;
     }
 
     int ret = ES_ReadContent(fd, content_buf, content_size);
     ES_CloseContent(fd);
     free(tmd_buf);
+    free(ticket_buf);
 
     if (ret < 0) {
         printf("  [!] ES_ReadContent failed: %d\n", ret);
