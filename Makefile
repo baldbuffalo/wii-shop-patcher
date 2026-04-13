@@ -22,7 +22,7 @@ OFILES    := $(SOURCES)/main.o
 all: $(BUILD) $(TARGET).dol
 
 $(BUILD):
-	mkdir -p $@
+	mkdir -p $@ $@/source
 
 $(TARGET).elf: $(OFILES)
 
