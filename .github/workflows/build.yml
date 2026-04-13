@@ -33,7 +33,7 @@ jobs:
       - name: Upload boot.dol
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: wii-shop-patcher
+          name: release
           path: wii-shop-patcher/
 
       - name: Create release on tag
