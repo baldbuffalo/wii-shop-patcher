@@ -2,39 +2,38 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
-
-defaults:
-  run:
-    shell: bash
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkitppc:latest
-      env:
-        PATH: /opt/devkitpro/devkitPPC/bin:/opt/devkitpro/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        DEVKITPRO: /opt/devkitpro
-        DEVKITPPC: /opt/devkitpro/devkitPPC
+
+    env:
+      DEVKITPRO: /opt/devkitpro
+      DEVKITPPC: /opt/devkitpro/devkitPPC
 
     steps:
       - uses: actions/checkout@v6.0.2
 
+      - name: Add devkitPro tools to PATH
+        run: |
+          echo "/opt/devkitpro/devkitPPC/bin" >> $GITHUB_PATH
+          echo "/opt/devkitpro/tools/bin" >> $GITHUB_PATH
+
       - name: Build
         run: make
 
-      - name: Prepare release zip
+      - name: Prepare release folder
         run: |
           mkdir -p wii-shop-patcher
           cp boot.dol wii-shop-patcher/boot.dol
-          zip -r wii-shop-patcher.zip wii-shop-patcher/
 
-      - name: Create release
-        uses: softprops/action-gh-release@v3.0.0
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.1
         with:
-          tag_name: latest
-          name: Latest Build
-          files: wii-shop-patcher.zip
-          prerelease: true
+          name: wii-shop-patcher
+          path: wii-shop-patcher/
