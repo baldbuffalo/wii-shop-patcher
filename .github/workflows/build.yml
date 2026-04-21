@@ -29,11 +29,25 @@ jobs:
 
       - name: Prepare release folder
         run: |
-          mkdir -p release/wii-shop-patcher
-          cp boot.dol release/wii-shop-patcher/boot.dol
+          mkdir -p release/wii-shop-replacer
+          cp boot.dol release/wii-shop-replacer/boot.dol
+          cat > release/wii-shop-replacer/README.txt << 'EOF'
+          Wii Shop Replacer
+          -----------------
+          1. Copy boot.dol to your SD card homebrew folder
+          2. Copy your replacement app to sd:/replace.dol
+          3. Run this app via the Homebrew Channel
+          4. Your original Shop Channel is automatically backed up to sd:/shop_backup/
+          5. The Shop Channel icon on the Wii menu will now launch your app instead
+
+          To restore your original Shop Channel, use the backup in sd:/shop_backup/
+          with a WAD manager.
+
+          Requirements: d2x cIOS installed in slot 249 or 250
+          EOF
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.01
         with:
-          name: wii-shop-patcher
+          name: wii-shop-replacer
           path: release/
