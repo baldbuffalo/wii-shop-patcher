@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <malloc.h>
 #include <ogcsys.h>
@@ -167,15 +168,24 @@ static int backup_title(uint64_t title_id,
     snprintf(tmd_path, sizeof(tmd_path), "%s/title.tmd", BACKUP_DIR);
     struct stat st;
     if (stat(tmd_path, &st) == 0) {
-        printf("  Backup already exists, skipping.\n");
+        printf("  Backup already exists at %s\n", BACKUP_DIR);
+        printf("  Skipping backup step.\n");
         return 0;
     }
 
-    mkdir(BACKUP_DIR, 0777);
+    // Create backup directory
+    errno = 0;
+    if (mkdir(BACKUP_DIR, 0777) < 0 && errno != EEXIST) {
+        printf("  [!] mkdir(%s) failed: errno %d\n", BACKUP_DIR, errno);
+        return -1;
+    }
 
     // Save TMD
     FILE *f = fopen(tmd_path, "wb");
-    if (!f) { printf("  [!] Cannot write TMD backup\n"); return -1; }
+    if (!f) {
+        printf("  [!] Cannot write TMD backup (errno %d)\n", errno);
+        return -1;
+    }
     fwrite(tmd_buf, 1, tmd_size, f);
     fclose(f);
     printf("  TMD saved\n");
@@ -184,7 +194,10 @@ static int backup_title(uint64_t title_id,
     char tik_path[128];
     snprintf(tik_path, sizeof(tik_path), "%s/ticket.bin", BACKUP_DIR);
     f = fopen(tik_path, "wb");
-    if (!f) { printf("  [!] Cannot write ticket backup\n"); return -1; }
+    if (!f) {
+        printf("  [!] Cannot write ticket backup (errno %d)\n", errno);
+        return -1;
+    }
     fwrite(views, sizeof(tikview), num_views, f);
     fclose(f);
     printf("  Ticket saved\n");
@@ -206,7 +219,7 @@ static int backup_title(uint64_t title_id,
         snprintf(cpath, sizeof(cpath), "%s/%08X.app", BACKUP_DIR, c->cid);
         f = fopen(cpath, "wb");
         if (!f) {
-            printf("write failed\n");
+            printf("write failed (errno %d)\n", errno);
             free(data);
             return -1;
         }
@@ -361,6 +374,17 @@ int main(int argc, char *argv[]) {
     }
     printf("  SD OK\n\n");
 
+    // Write test — catch read-only / exFAT issues early
+    errno = 0;
+    FILE *wt = fopen("sd:/write_test.tmp", "wb");
+    if (!wt) {
+        printf("  [!] SD card is not writable (errno %d)\n", errno);
+        printf("      Check write-protect tab or reformat as FAT32\n");
+        goto wait_exit;
+    }
+    fclose(wt);
+    remove("sd:/write_test.tmp");
+
     // 0. cIOS
     printf("[0/5] Loading cIOS...\n");
     int cios = autodetect_and_load_cios();
@@ -409,7 +433,6 @@ int main(int argc, char *argv[]) {
     printf("[3/5] Backing up original Shop Channel...\n");
     if (backup_title(title_id, tmd_buf, tmd_size, views, num_views) < 0) {
         printf("  [!] Backup failed — aborting for safety\n");
-        printf("      Check your SD card has enough space\n");
         free(tmd_buf); free(views);
         goto wait_exit;
     }
