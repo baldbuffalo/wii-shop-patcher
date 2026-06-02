@@ -12,7 +12,7 @@ CFLAGS    := -g -O2 -Wall $(MACHDEP) $(INCLUDE) -I$(DEVKITPRO)/libogc/include
 CXXFLAGS  := $(CFLAGS)
 LDFLAGS   := -g $(MACHDEP) -Wl,-Map,$(notdir $@).map -L$(DEVKITPRO)/libogc/lib/wii
 
-LIBS      := -lwiiuse -lbte -lwiikeyboard -logc -lm -lfat
+LIBS      := -lwiiuse -lbte -lwiikeyboard -lfat -logc -lm
 
 include $(DEVKITPPC)/base_rules
 
