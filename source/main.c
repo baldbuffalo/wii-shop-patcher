@@ -364,8 +364,8 @@ int main(int argc, char *argv[]) {
     WPAD_Init();
 
     printf("\n");
-    printf("  Wii Shop Replacer\n");
-    printf("  -----------------\n\n");
+    printf("  Wii Shop Patcher\n");
+    printf("  ----------------\n\n");
 
     // SD card
     if (!fatInitDefault()) {
