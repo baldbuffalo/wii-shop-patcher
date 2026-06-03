@@ -15,7 +15,9 @@
 // Config
 // -----------------------------------------------------------------------
 #define REPLACE_DOL     "sd:/replace.dol"
-#define BACKUP_DIR      "sd:/shop_backup"
+#define BACKUP_TMD      "sd:/apps/wii-shop-patcher/shopbak_title.tmd"
+#define BACKUP_TICKET   "sd:/apps/wii-shop-patcher/shopbak_ticket.bin"
+#define BACKUP_APP_FMT  "sd:/apps/wii-shop-patcher/shopbak_%08X.app"
 
 #define SHOP_TITLE_USA      0x0001000248414241ULL
 #define SHOP_TITLE_EUR      0x0001000248414245ULL
@@ -157,50 +159,40 @@ static uint8_t *read_content(uint64_t title_id, tikview *views, u32 num_views,
 }
 
 // -----------------------------------------------------------------------
-// Backup — save TMD + all raw contents to sd:/shop_backup/
-// Skips silently if backup already exists so repeat runs are fast.
+// Backup — save TMD + all raw contents to sd:/ as shopbak_* files.
+// No subdirectory needed — works on both FAT32 and exFAT.
 // -----------------------------------------------------------------------
 static int backup_title(uint64_t title_id,
                          signed_blob *tmd_buf, u32 tmd_size,
                          tikview *views, u32 num_views) {
     // Check if backup already exists
-    char tmd_path[128];
-    snprintf(tmd_path, sizeof(tmd_path), "%s/title.tmd", BACKUP_DIR);
     struct stat st;
-    if (stat(tmd_path, &st) == 0) {
-        printf("  Backup already exists at %s\n", BACKUP_DIR);
+    if (stat(BACKUP_TMD, &st) == 0) {
+        printf("  Backup already exists at\n");
+        printf("  sd:/apps/wii-shop-patcher/\n");
         printf("  Skipping backup step.\n");
         return 0;
     }
 
-    // Create backup directory
-    errno = 0;
-    if (mkdir(BACKUP_DIR, 0777) < 0 && errno != EEXIST) {
-        printf("  [!] mkdir(%s) failed: errno %d\n", BACKUP_DIR, errno);
-        return -1;
-    }
-
     // Save TMD
-    FILE *f = fopen(tmd_path, "wb");
+    FILE *f = fopen(BACKUP_TMD, "wb");
     if (!f) {
         printf("  [!] Cannot write TMD backup (errno %d)\n", errno);
         return -1;
     }
     fwrite(tmd_buf, 1, tmd_size, f);
     fclose(f);
-    printf("  TMD saved\n");
+    printf("  TMD saved -> %s\n", BACKUP_TMD);
 
     // Save ticket views
-    char tik_path[128];
-    snprintf(tik_path, sizeof(tik_path), "%s/ticket.bin", BACKUP_DIR);
-    f = fopen(tik_path, "wb");
+    f = fopen(BACKUP_TICKET, "wb");
     if (!f) {
         printf("  [!] Cannot write ticket backup (errno %d)\n", errno);
         return -1;
     }
     fwrite(views, sizeof(tikview), num_views, f);
     fclose(f);
-    printf("  Ticket saved\n");
+    printf("  Ticket saved -> %s\n", BACKUP_TICKET);
 
     // Save each content
     tmd *t = SIGNATURE_PAYLOAD(tmd_buf);
@@ -215,8 +207,8 @@ static int backup_title(uint64_t title_id,
         uint8_t *data = read_content(title_id, views, num_views, c, &size);
         if (!data) { printf("read failed\n"); return -1; }
 
-        char cpath[128];
-        snprintf(cpath, sizeof(cpath), "%s/%08X.app", BACKUP_DIR, c->cid);
+        char cpath[64];
+        snprintf(cpath, sizeof(cpath), BACKUP_APP_FMT, c->cid);
         f = fopen(cpath, "wb");
         if (!f) {
             printf("write failed (errno %d)\n", errno);
@@ -229,7 +221,7 @@ static int backup_title(uint64_t title_id,
         printf("OK\n");
     }
 
-    printf("  Backup complete -> %s\n", BACKUP_DIR);
+    printf("  Backup complete -> sd:/apps/wii-shop-patcher/\n");
     return 0;
 }
 
@@ -460,14 +452,14 @@ int main(int argc, char *argv[]) {
 
     if (ret < 0) {
         printf("\n  [!] Failed (ES %d)\n", ret);
-        printf("  Your original is safe in %s\n", BACKUP_DIR);
+        printf("  Your original is safe in sd:/apps/wii-shop-patcher/\n");
         goto wait_exit;
     }
 
     printf("\n  Done!\n");
     printf("  Shop Channel icon is unchanged on the Wii menu.\n");
     printf("  Launching it will now run your app.\n");
-    printf("  Original backed up to: %s\n", BACKUP_DIR);
+    printf("  Original backed up to: sd:/apps/wii-shop-patcher/\n");
 
 wait_exit:
     printf("\n  Press HOME to exit.\n");
