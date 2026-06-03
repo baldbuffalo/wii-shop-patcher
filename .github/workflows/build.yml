@@ -29,11 +29,11 @@ jobs:
 
       - name: Prepare release folder
         run: |
-          mkdir -p release/wii-shop-replacer
-          cp boot.dol release/wii-shop-replacer/boot.dol
-          cat > release/wii-shop-replacer/README.txt << 'EOF'
-          Wii Shop Replacer
-          -----------------
+          mkdir -p release/wii-shop-patcher
+          cp boot.dol release/wii-shop-patcher/boot.dol
+          cat > release/wii-shop-patcher/README.txt << 'EOF'
+          Wii Shop Patcher
+          ----------------
           1. Copy boot.dol to your SD card homebrew folder
           2. Copy your replacement app to sd:/replace.dol
           3. Run this app via the Homebrew Channel
@@ -49,5 +49,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: wii-shop-replacer
+          name: wii-shop-patcher
           path: release/
